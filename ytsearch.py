@@ -1,0 +1,183 @@
+#!/usr/bin/env python3
+"""
+ytsearch.py — fuzzy YouTube audio search & stream in the CLI
+Requires: pip install yt-dlp
+Requires: brew install mpv (or ffmpeg for ffplay fallback)
+"""
+
+import sys
+import subprocess
+import shutil
+from pathlib import Path
+from difflib import SequenceMatcher
+
+try:
+    import yt_dlp
+except ImportError:
+    sys.exit("Missing yt-dlp. Run: pip install yt-dlp")
+
+PAGE_SIZE = 5
+FETCH_COUNT = 25  # fetch once, rank locally — avoids repeat requests
+
+
+def fetch_results(query: str) -> list[dict]:
+    opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "extract_flat": True,  # don't resolve stream URLs yet — faster
+    }
+    search_key = f"ytsearch{FETCH_COUNT}:{query}"
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(search_key, download=False)
+    return info.get("entries", [])
+
+
+def fuzzy_score(query: str, entry: dict) -> float:
+    title = (entry.get("title") or "").lower()
+    uploader = (entry.get("uploader") or "").lower()
+    q = query.lower()
+    title_score = SequenceMatcher(None, q, title).ratio()
+    # boost if all query words appear in title
+    word_bonus = sum(w in title for w in q.split()) / max(len(q.split()), 1)
+    uploader_score = SequenceMatcher(None, q, uploader).ratio() * 0.3
+    return title_score * 0.6 + word_bonus * 0.3 + uploader_score
+
+
+def rank_results(query: str, entries: list[dict]) -> list[dict]:
+    scored = [(fuzzy_score(query, e), e) for e in entries if e.get("title")]
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [e for _, e in scored]
+
+
+def format_duration(seconds) -> str:
+    if not seconds:
+        return "?:??"
+    seconds = int(seconds)
+    m, s = divmod(seconds, 60)
+    h, m = divmod(m, 60)
+    return f"{h}:{m:02}:{s:02}" if h else f"{m}:{s:02}"
+
+
+def print_page(entries: list[dict], page: int, total_pages: int):
+    start = page * PAGE_SIZE
+    page_entries = entries[start : start + PAGE_SIZE]
+    print(f"\n{'─' * 55}")
+    print(f"  Results  (page {page + 1}/{total_pages})")
+    print(f"{'─' * 55}")
+    for i, entry in enumerate(page_entries, 1):
+        title = entry.get("title", "Unknown")[:50]
+        uploader = entry.get("uploader") or entry.get("channel") or "?"
+        duration = format_duration(entry.get("duration"))
+        print(f"  [{i}] {title}")
+        print(f"      {uploader}  •  {duration}")
+    print(f"{'─' * 55}")
+    print("  n=next  p=prev  1-5=play  q=quit  s=new search")
+    print(f"{'─' * 55}\n")
+    return page_entries
+
+
+def get_stream_url(video_id: str) -> str | None:
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    opts = {
+        "format": "bestaudio",
+        "quiet": True,
+        "no_warnings": True,
+    }
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+    return info.get("url")
+
+
+def get_player() -> tuple[str, str] | None:
+    """Read player from .player config, fall back to PATH detection."""
+    config = Path(__file__).parent / ".player"
+    if config.exists():
+        name = config.read_text().strip()
+        if name == "vlc":
+            return ("vlc", "/Applications/VLC.app/Contents/MacOS/VLC")
+        path = shutil.which(name)
+        if path:
+            return (name, path)
+    # fallback
+    for name in ("mpv", "ffplay"):
+        path = shutil.which(name)
+        if path:
+            return (name, path)
+    if Path("/Applications/VLC.app/Contents/MacOS/VLC").exists():
+        return ("vlc", "/Applications/VLC.app/Contents/MacOS/VLC")
+    return None
+
+
+def play(entry: dict):
+    video_id = entry.get("id") or entry.get("url", "").split("v=")[-1]
+    title = entry.get("title", "Unknown")
+    print(f"\n  ▶ Fetching stream for: {title}")
+
+    stream_url = get_stream_url(video_id)
+    if not stream_url:
+        print("  ✗ Could not resolve stream URL.")
+        return
+
+    player = get_player()
+    if not player:
+        sys.exit("No player found. Re-run setup.sh for instructions.")
+
+    name, path = player
+    print(f"  ▶ Playing via {name} — Ctrl+C to stop\n")
+    try:
+        if name == "mpv":
+            subprocess.run([path, "--no-video", "--really-quiet", stream_url])
+        elif name == "vlc":
+            subprocess.run([path, "--intf", "dummy", "--play-and-exit",
+                            "--no-video", stream_url])
+        else:  # ffplay
+            subprocess.run([path, "-nodisp", "-autoexit", "-i", stream_url])
+    except KeyboardInterrupt:
+        print("\n  ■ Stopped.")
+
+
+def search_loop(query: str):
+    print(f"\n  Searching for: {query!r} ...")
+    raw = fetch_results(query)
+    if not raw:
+        print("  No results found.")
+        return
+
+    ranked = rank_results(query, raw)
+    total_pages = (len(ranked) + PAGE_SIZE - 1) // PAGE_SIZE
+    page = 0
+
+    while True:
+        page_entries = print_page(ranked, page, total_pages)
+        choice = input("  > ").strip().lower()
+
+        if choice == "q":
+            print("  Bye.")
+            sys.exit(0)
+        elif choice == "s":
+            return  # back to outer search prompt
+        elif choice == "n":
+            page = min(page + 1, total_pages - 1)
+        elif choice == "p":
+            page = max(page - 1, 0)
+        elif choice.isdigit() and 1 <= int(choice) <= len(page_entries):
+            play(page_entries[int(choice) - 1])
+        else:
+            print("  Invalid input.")
+
+
+def main():
+    print("\n  yt audio search  (yt-dlp + mpv)")
+    while True:
+        try:
+            query = input("\n  Search: ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print("\n  Bye.")
+            break
+        if not query:
+            continue
+        search_loop(query)
+
+
+if __name__ == "__main__":
+    main()
