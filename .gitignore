@@ -2,3 +2,4 @@
 .player
 __pycache__/
 *.pyc
+.yt_search_history.json
