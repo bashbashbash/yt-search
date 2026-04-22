@@ -29,10 +29,15 @@ Run `./setup.sh` every time to launch. It checks dependencies and drops you into
 | Key | Action |
 |---|---|
 | `1-5` | Play result |
+| `h` | View play history |
 | `n` / `p` | Next / previous page |
 | `s` | New search |
 | `q` | Quit |
 | `Ctrl+C` | Stop playback |
+
+## History
+
+Play history is stored locally in `.yt_search_history.json` (capped at 200 entries, gitignored). The 5 most recent plays appear on startup. From the history view you can page through all entries, play directly from history, or delete all history.
 
 ## How it works
 
