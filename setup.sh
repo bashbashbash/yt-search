@@ -40,13 +40,10 @@ else
 fi
 
 # ─── 3. yt-dlp ────────────────────────────────────────────────────────────────
-if ! "$PYTHON" -c "import yt_dlp" &>/dev/null; then
-  info "Installing yt-dlp..."
-  "$PIP" install --quiet yt-dlp
-  ok "yt-dlp installed"
-else
-  ok "yt-dlp already installed"
+if ! command -v yt-dlp &>/dev/null; then
+  err "yt-dlp not found. Install it: brew install yt-dlp"
 fi
+ok "yt-dlp found: $(yt-dlp --version)"
 
 # ─── 4. Audio player ──────────────────────────────────────────────────────────
 PLAYER=""

@@ -1,35 +1,42 @@
 #!/usr/bin/env python3
 """
 ytsearch.py — fuzzy YouTube audio search & stream in the CLI
-Requires: pip install yt-dlp
-Requires: brew install mpv (or ffmpeg for ffplay fallback)
+Requires: yt-dlp (brew install yt-dlp or standalone binary)
+Requires: brew install mpv (or VLC app bundle)
 """
 
+import json
 import sys
 import subprocess
 import shutil
 from pathlib import Path
 from difflib import SequenceMatcher
 
-try:
-    import yt_dlp
-except ImportError:
-    sys.exit("Missing yt-dlp. Run: pip install yt-dlp")
-
 PAGE_SIZE = 5
 FETCH_COUNT = 25  # fetch once, rank locally — avoids repeat requests
 
 
 def fetch_results(query: str) -> list[dict]:
-    opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "extract_flat": True,  # don't resolve stream URLs yet — faster
-    }
-    search_key = f"ytsearch{FETCH_COUNT}:{query}"
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(search_key, download=False)
-    return info.get("entries", [])
+    result = subprocess.run(
+        [
+            "yt-dlp",
+            f"ytsearch{FETCH_COUNT}:{query}",
+            "--dump-json",
+            "--flat-playlist",
+            "--no-warnings",
+            "--quiet",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    entries = []
+    for line in result.stdout.strip().splitlines():
+        if line:
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return entries
 
 
 def fuzzy_score(query: str, entry: dict) -> float:
@@ -78,14 +85,20 @@ def print_page(entries: list[dict], page: int, total_pages: int):
 
 def get_stream_url(video_id: str) -> str | None:
     url = f"https://www.youtube.com/watch?v={video_id}"
-    opts = {
-        "format": "bestaudio",
-        "quiet": True,
-        "no_warnings": True,
-    }
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=False)
-    return info.get("url")
+    result = subprocess.run(
+        [
+            "yt-dlp",
+            url,
+            "--get-url",
+            "-f", "bestaudio",
+            "--no-warnings",
+            "--quiet",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    stream = result.stdout.strip()
+    return stream if stream else None
 
 
 def get_player() -> tuple[str, str] | None:
@@ -112,6 +125,7 @@ def play(entry: dict):
     video_id = entry.get("id") or entry.get("url", "").split("v=")[-1]
     title = entry.get("title", "Unknown")
     print(f"\n  ▶ Fetching stream for: {title}")
+    print(f"  ▶ ID: {video_id}")
 
     stream_url = get_stream_url(video_id)
     if not stream_url:
