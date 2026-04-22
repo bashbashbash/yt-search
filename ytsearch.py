@@ -5,6 +5,7 @@ Requires: yt-dlp (brew install yt-dlp or standalone binary)
 Requires: brew install mpv (or VLC app bundle)
 """
 
+import datetime
 import json
 import sys
 import subprocess
@@ -64,6 +65,37 @@ def format_duration(seconds) -> str:
     h, m = divmod(m, 60)
     return f"{h}:{m:02}:{s:02}" if h else f"{m}:{s:02}"
 
+def load_history() -> list[dict]:
+    history_file = Path(__file__).parent / ".yt_search_history.json"
+    if not history_file.exists():
+        return []
+    try:
+        return json.loads(history_file.read_text())
+    except (json.JSONDecodeError, OSError):
+        return []
+    
+def save_to_history(entry: dict):
+    history_file = Path(__file__).parent / ".yt_search_history.json"
+    history = load_history()
+    history.insert(0, entry)
+    history = history[:200]
+    try:
+        history_file.write_text(json.dumps(history, indent=2))
+    except OSError:
+        pass
+
+def show_recent(history: list[dict]):
+    if not history:
+        return
+    recent = history[:5]
+    print(f"\n  {'─' * 55}")
+    print("  Recent plays:")
+    for i, entry in enumerate(recent, 1):
+        title = entry.get("title", "Unknown")[:45]
+        uploader = entry.get("uploader", "?")[:30]
+        print(f"  [{i}] {title}")
+        print(f"      {uploader}")
+    print(f"  {'─' * 55}")
 
 def print_page(entries: list[dict], page: int, total_pages: int):
     start = page * PAGE_SIZE
@@ -131,6 +163,13 @@ def play(entry: dict):
     if not stream_url:
         print("  ✗ Could not resolve stream URL.")
         return
+    save_to_history({
+        "title": title,
+        "uploader": entry.get("uploader") or entry.get("channel") or "?",
+        "duration": format_duration(entry.get("duration")),
+        "video_id": video_id,
+    "played_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+    })
 
     player = get_player()
     if not player:
@@ -166,8 +205,7 @@ def search_loop(query: str):
         choice = input("  > ").strip().lower()
 
         if choice == "q":
-            print("  Bye.")
-            sys.exit(0)
+            return
         elif choice == "s":
             return  # back to outer search prompt
         elif choice == "n":
@@ -179,18 +217,80 @@ def search_loop(query: str):
         else:
             print("  Invalid input.")
 
+def history_loop(history: list[dict]):
+    if not history:
+        print("\n  No history yet.")
+        return
+
+    PAGE = 10
+    total_pages = (len(history) + PAGE - 1) // PAGE
+    page = 0
+
+    while True:
+        start = page * PAGE
+        page_entries = history[start : start + PAGE]
+        print(f"\n  {'─' * 55}")
+        print(f"  History  (page {page + 1}/{total_pages})")
+        print(f"  {'─' * 55}")
+        for i, entry in enumerate(page_entries, 1):
+            title = entry.get("title", "Unknown")[:45]
+            uploader = entry.get("uploader", "?")
+            duration = entry.get("duration", "?:??")
+            played_at = entry.get("played_at", "")
+            print(f"  [{i:2}] {title}")
+            print(f"       {uploader}  •  {duration}  •  {played_at}")
+        print(f"  {'─' * 55}")
+        print("  n=next  p=prev  1-10=play  d=delete all  q=back")
+        print(f"  {'─' * 55}\n")
+
+        choice = input("  > ").strip().lower()
+
+        if choice == "q":
+            return
+        elif choice == "n":
+            page = min(page + 1, total_pages - 1)
+        elif choice == "p":
+            page = max(page - 1, 0)
+        elif choice == "d":
+            delete_history()
+            return
+        elif choice.isdigit() and 1 <= int(choice) <= len(page_entries):
+            play(page_entries[int(choice) - 1])
+        else:
+            print("  Invalid input.")
+
+def delete_history():
+    history_file = Path(__file__).parent / ".yt_search_history.json"
+    confirm = input("\n  Delete all history? (y/n): ").strip().lower()
+    if confirm == "y":
+        try:
+            history_file.unlink()
+            print("  ✓ History deleted.")
+        except OSError:
+            print("  ✗ Could not delete history file.")
+    else:
+        print("  Cancelled.")
 
 def main():
     print("\n  yt audio search  (yt-dlp + mpv)")
+    history = load_history()
+    show_recent(history)
     while True:
         try:
-            query = input("\n  Search: ").strip()
+            query = input("\n  Search (or 'h' for history): ").strip()
         except (KeyboardInterrupt, EOFError):
             print("\n  Bye.")
             break
         if not query:
             continue
-        search_loop(query)
+        if query.lower() == "h":
+            history = load_history()
+            history_loop(history)
+        elif query.lower() == "q":
+            print("  Bye.")
+            break
+        else:
+            search_loop(query)
 
 
 if __name__ == "__main__":
