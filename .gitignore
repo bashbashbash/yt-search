@@ -1,0 +1,4 @@
+.venv/
+.player
+__pycache__/
+*.pyc
