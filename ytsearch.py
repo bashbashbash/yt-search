@@ -77,6 +77,8 @@ def load_history() -> list[dict]:
 def save_to_history(entry: dict):
     history_file = Path(__file__).parent / ".yt_search_history.json"
     history = load_history()
+    if history and history[0].get("id") == entry.get("id"):
+        return  # don't save duplicate of most recent entry
     history.insert(0, entry)
     history = history[:200]
     try:
@@ -154,7 +156,7 @@ def get_player() -> tuple[str, str] | None:
 
 
 def play(entry: dict):
-    video_id = entry.get("id") or entry.get("url", "").split("v=")[-1]
+    video_id = entry.get("id")
     title = entry.get("title", "Unknown")
     print(f"\n  ▶ Fetching stream for: {title}")
     print(f"  ▶ ID: {video_id}")
@@ -166,9 +168,9 @@ def play(entry: dict):
     save_to_history({
         "title": title,
         "uploader": entry.get("uploader") or entry.get("channel") or "?",
-        "duration": format_duration(entry.get("duration")),
-        "video_id": video_id,
-    "played_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "duration": entry.get("duration"),
+        "id": video_id,
+        "played_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
     })
 
     player = get_player()
@@ -271,27 +273,62 @@ def delete_history():
     else:
         print("  Cancelled.")
 
+def recent_prompt(history: list[dict]) -> str:
+    """Returns 'quit', 'continue', or 'search'."""
+    try:
+        choice = input("\n  Play recent (1-5) or Enter to search: ").strip()
+    except (KeyboardInterrupt, EOFError):
+        print("\n  Bye.")
+        return "quit"
+    if choice.lower() == "q":
+        print("  Bye.")
+        return "quit"
+    elif choice.lower() == "h":
+        history_loop(history)
+        return "continue"
+    elif choice.isdigit() and 1 <= int(choice) <= len(history[:5]):
+        play(history[int(choice) - 1])
+        return "continue"
+    elif choice == "":
+        return "search"
+    else:
+        search_loop(choice)
+        return "continue"
+
+def search_prompt(history: list[dict]) -> bool:
+    """Handle search prompt interaction. Returns False to quit, True to continue."""
+    try:
+        query = input("\n  Search (or 'h' for history): ").strip()
+    except (KeyboardInterrupt, EOFError):
+        print("\n  Bye.")
+        return False
+    if not query:
+        return True
+    if query.lower() == "q":
+        print("  Bye.")
+        return False
+    elif query.lower() == "h":
+        history_loop(history)
+        return True
+    else:
+        search_loop(query)
+        return True
+
 def main():
     print("\n  yt audio search  (yt-dlp + mpv)")
-    history = load_history()
-    show_recent(history)
     while True:
-        try:
-            query = input("\n  Search (or 'h' for history): ").strip()
-        except (KeyboardInterrupt, EOFError):
-            print("\n  Bye.")
-            break
-        if not query:
-            continue
-        if query.lower() == "h":
-            history = load_history()
-            history_loop(history)
-        elif query.lower() == "q":
-            print("  Bye.")
-            break
+        history = load_history()
+        show_recent(history)
+        if history:
+            signal = recent_prompt(history)
+            if signal == "quit":
+                return
+            elif signal == "search":
+                if not search_prompt(history):
+                    return
         else:
-            search_loop(query)
-
+            if not search_prompt(history):
+                return
 
 if __name__ == "__main__":
     main()
