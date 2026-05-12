@@ -13,6 +13,8 @@ import shutil
 from pathlib import Path
 from difflib import SequenceMatcher
 
+import twitch
+
 PAGE_SIZE = 5
 FETCH_COUNT = 25  # fetch once, rank locally — avoids repeat requests
 
@@ -158,18 +160,26 @@ def get_player() -> tuple[str, str] | None:
 def play(entry: dict):
     video_id = entry.get("id")
     title = entry.get("title", "Unknown")
-    print(f"\n  ▶ Fetching stream for: {title}")
-    print(f"  ▶ ID: {video_id}")
+    source = entry.get("source", "youtube")
 
-    stream_url = get_stream_url(video_id)
-    if not stream_url:
-        print("  ✗ Could not resolve stream URL.")
-        return
+    if source == "twitch":
+        stream_url = f"https://twitch.tv/{video_id}"
+        print(f"\n  ▶ Playing live: {title}")
+        print(f"  ▶ twitch.tv/{video_id}")
+    else:
+        print(f"\n  ▶ Fetching stream for: {title}")
+        print(f"  ▶ ID: {video_id}")
+        stream_url = get_stream_url(video_id)
+        if not stream_url:
+            print("  ✗ Could not resolve stream URL.")
+            return
+
     save_to_history({
         "title": title,
         "uploader": entry.get("uploader") or entry.get("channel") or "?",
         "duration": entry.get("duration"),
         "id": video_id,
+        "source": source,
         "played_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
     })
 
@@ -314,8 +324,69 @@ def search_prompt(history: list[dict]) -> bool:
         search_loop(query)
         return True
 
-def main():
-    print("\n  yt audio search  (yt-dlp + mpv)")
+def twitch_channel_menu(channels: list[dict]):
+    """Display live Twitch channels and let user pick one to watch."""
+    print(f"\n{'─' * 55}")
+    print(f"  Live channels  ({len(channels)})")
+    print(f"{'─' * 55}")
+    for i, ch in enumerate(channels, 1):
+        title = ch.get("title", "")[:40]
+        game = ch.get("game", "")
+        viewers = ch.get("viewers", 0)
+        uploader = ch.get("uploader", ch.get("id", "?"))
+        print(f"  [{i}] {uploader}")
+        print(f"      {title}")
+        print(f"      {game}  •  {viewers:,} viewers")
+    print(f"{'─' * 55}")
+    print("  1-{}=watch  q=back".format(len(channels)))
+    print(f"{'─' * 55}\n")
+
+    choice = input("  > ").strip().lower()
+    if choice == "q":
+        return
+    if choice.isdigit() and 1 <= int(choice) <= len(channels):
+        play(channels[int(choice) - 1])
+
+
+def platform_menu() -> str | None:
+    """Show platform selection menu. Returns 'youtube', 'twitch', or None to quit."""
+    # Check Twitch availability
+    twitch_ok, twitch_reason = twitch.is_available()
+
+    print(f"\n{'─' * 55}")
+    print("  hearth")
+    print(f"{'─' * 55}")
+    print("  [1] YouTube")
+    if twitch_ok:
+        print("  [2] Twitch")
+    elif twitch_reason == "not configured":
+        print("  [2] Twitch  (not configured — see README)")
+    else:
+        print("  [2] Twitch  (service unreachable)")
+    print(f"{'─' * 55}")
+    print("  1-2=select  q=quit")
+    print(f"{'─' * 55}\n")
+
+    choice = input("  > ").strip().lower()
+    if choice == "q":
+        return None
+    elif choice == "1":
+        return "youtube"
+    elif choice == "2":
+        if not twitch_ok:
+            if twitch_reason == "not configured":
+                print("\n  Twitch is not configured.")
+                print("  Create .twitch_config with your client_id.")
+                print("  See README for setup instructions.")
+            else:
+                print(f"\n  Twitch: {twitch_reason}")
+            return "back"
+        return "twitch"
+    return "back"
+
+
+def youtube_flow():
+    """The original YouTube search/history loop."""
     while True:
         history = load_history()
         show_recent(history)
@@ -329,6 +400,29 @@ def main():
         else:
             if not search_prompt(history):
                 return
+
+
+def twitch_flow():
+    """Fetch followed live channels and display selection menu."""
+    print("\n  Fetching live channels...")
+    channels = twitch.get_live_channels()
+    if not channels:
+        print("  No followed channels are live.")
+        return
+    twitch_channel_menu(channels)
+
+
+def main():
+    while True:
+        choice = platform_menu()
+        if choice is None:
+            print("  Bye.")
+            return
+        elif choice == "youtube":
+            youtube_flow()
+        elif choice == "twitch":
+            twitch_flow()
+        # "back" loops to platform menu
 
 if __name__ == "__main__":
     main()

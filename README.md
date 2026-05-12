@@ -1,6 +1,6 @@
 # yt-search
 
-A lightweight CLI tool to search and stream YouTube audio directly in the terminal. No browser, no API key, no GUI.
+A lightweight CLI tool to search and stream YouTube audio and watch live Twitch channels directly in the terminal. No browser, no GUI.
 
 ## Branches
 
@@ -39,6 +39,35 @@ Run `./setup.sh` every time to launch. It checks dependencies and drops you into
 
 Play history is stored locally in `.yt_search_history.json` (capped at 200 entries, gitignored). The 5 most recent plays appear on startup. From the history view you can page through all entries, play directly from history, or delete all history.
 
+## Twitch setup
+
+Twitch integration shows live channels you follow. It requires a Twitch application for OAuth — no client secret is needed (PKCE flow).
+
+### 1. Register a Twitch app
+
+1. Go to [dev.twitch.tv/console/apps](https://dev.twitch.tv/console/apps) and create a new application
+2. Set the OAuth redirect URL to `http://127.0.0.1:8675/callback`
+3. Set the category to any value (e.g. "Other")
+4. Copy the **Client ID** from the app's manage page
+
+### 2. Create `.twitch_config`
+
+In the repo root:
+
+```json
+{
+  "client_id": "your_client_id_here"
+}
+```
+
+Optionally add `"redirect_port": 8675` if you need a different port — default is `8675`.
+
+### 3. Authorize
+
+On first launch, selecting Twitch opens your browser to authorize the app. The token is saved to `.twitch_token` and refreshed automatically on future runs.
+
+Both `.twitch_config` and `.twitch_token` are gitignored.
+
 ## How it works
 
 Fetches 25 results in a single `yt-dlp` call using `ytsearch25:`, ranks them locally with a fuzzy scorer (`difflib.SequenceMatcher`) to avoid repeat network requests, then resolves the stream URL on demand when you pick a track. Audio plays via VLC in headless mode — no window, no browser.
@@ -70,6 +99,7 @@ Importing `yt_dlp` into the Python process costs **14.8 MB** of peak memory — 
 
 | File | Purpose |
 |---|---|
-| `ytsearch.py` | Main script |
+| `ytsearch.py` | Main script — platform menu, YouTube search, playback |
+| `twitch.py` | Twitch integration — OAuth PKCE, Helix API, followed channels |
 | `setup.sh` | Dependency check and launcher |
 | `benchmark.py` | CLI vs API performance comparison |
