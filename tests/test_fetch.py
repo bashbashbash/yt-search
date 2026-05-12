@@ -1,7 +1,7 @@
 import json
 import pytest
 from unittest.mock import patch, MagicMock
-from ytsearch import fetch_results, get_stream_url
+from youtube import fetch_results, get_stream_url
 
 
 def make_mock_result(stdout: str, returncode: int = 0):
