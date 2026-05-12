@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ytsearch.py — fuzzy YouTube audio search & stream in the CLI
+ytsearch.py — CLI interface: platform menu, search interaction, playback, history
 Requires: yt-dlp (brew install yt-dlp or standalone binary)
 Requires: brew install mpv (or VLC app bundle)
 """
@@ -11,52 +11,11 @@ import sys
 import subprocess
 import shutil
 from pathlib import Path
-from difflib import SequenceMatcher
 
 import twitch
+import youtube
 
 PAGE_SIZE = 5
-FETCH_COUNT = 25  # fetch once, rank locally — avoids repeat requests
-
-
-def fetch_results(query: str) -> list[dict]:
-    result = subprocess.run(
-        [
-            "yt-dlp",
-            f"ytsearch{FETCH_COUNT}:{query}",
-            "--dump-json",
-            "--flat-playlist",
-            "--no-warnings",
-            "--quiet",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    entries = []
-    for line in result.stdout.strip().splitlines():
-        if line:
-            try:
-                entries.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-    return entries
-
-
-def fuzzy_score(query: str, entry: dict) -> float:
-    title = (entry.get("title") or "").lower()
-    uploader = (entry.get("uploader") or "").lower()
-    q = query.lower()
-    title_score = SequenceMatcher(None, q, title).ratio()
-    # boost if all query words appear in title
-    word_bonus = sum(w in title for w in q.split()) / max(len(q.split()), 1)
-    uploader_score = SequenceMatcher(None, q, uploader).ratio() * 0.3
-    return title_score * 0.6 + word_bonus * 0.3 + uploader_score
-
-
-def rank_results(query: str, entries: list[dict]) -> list[dict]:
-    scored = [(fuzzy_score(query, e), e) for e in entries if e.get("title")]
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return [e for _, e in scored]
 
 
 def format_duration(seconds) -> str:
@@ -119,24 +78,6 @@ def print_page(entries: list[dict], page: int, total_pages: int):
     return page_entries
 
 
-def get_stream_url(video_id: str) -> str | None:
-    url = f"https://www.youtube.com/watch?v={video_id}"
-    result = subprocess.run(
-        [
-            "yt-dlp",
-            url,
-            "--get-url",
-            "-f", "bestaudio",
-            "--no-warnings",
-            "--quiet",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    stream = result.stdout.strip()
-    return stream if stream else None
-
-
 def get_player() -> tuple[str, str] | None:
     """Read player from .player config, fall back to PATH detection."""
     config = Path(__file__).parent / ".player"
@@ -169,7 +110,7 @@ def play(entry: dict):
     else:
         print(f"\n  ▶ Fetching stream for: {title}")
         print(f"  ▶ ID: {video_id}")
-        stream_url = get_stream_url(video_id)
+        stream_url = youtube.get_stream_url(video_id)
         if not stream_url:
             print("  ✗ Could not resolve stream URL.")
             return
@@ -203,12 +144,11 @@ def play(entry: dict):
 
 def search_loop(query: str):
     print(f"\n  Searching for: {query!r} ...")
-    raw = fetch_results(query)
-    if not raw:
+    ranked = youtube.search(query)
+    if not ranked:
         print("  No results found.")
         return
 
-    ranked = rank_results(query, raw)
     total_pages = (len(ranked) + PAGE_SIZE - 1) // PAGE_SIZE
     page = 0
 
@@ -350,13 +290,16 @@ def twitch_channel_menu(channels: list[dict]):
 
 def platform_menu() -> str | None:
     """Show platform selection menu. Returns 'youtube', 'twitch', or None to quit."""
-    # Check Twitch availability
+    yt_ok, yt_reason = youtube.is_available()
     twitch_ok, twitch_reason = twitch.is_available()
 
     print(f"\n{'─' * 55}")
     print("  hearth")
     print(f"{'─' * 55}")
-    print("  [1] YouTube")
+    if yt_ok:
+        print("  [1] YouTube")
+    else:
+        print(f"  [1] YouTube  ({yt_reason})")
     if twitch_ok:
         print("  [2] Twitch")
     elif twitch_reason == "not configured":
@@ -371,6 +314,9 @@ def platform_menu() -> str | None:
     if choice == "q":
         return None
     elif choice == "1":
+        if not yt_ok:
+            print(f"\n  YouTube: {yt_reason}")
+            return "back"
         return "youtube"
     elif choice == "2":
         if not twitch_ok:

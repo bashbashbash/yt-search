@@ -99,7 +99,8 @@ Importing `yt_dlp` into the Python process costs **14.8 MB** of peak memory — 
 
 | File | Purpose |
 |---|---|
-| `ytsearch.py` | Main script — platform menu, YouTube search, playback |
-| `twitch.py` | Twitch integration — OAuth PKCE, Helix API, followed channels |
+| `ytsearch.py` | CLI entry point — platform menu, search interaction, playback, history |
+| `youtube.py` | YouTube data adapter — search, fuzzy ranking, stream URL resolution |
+| `twitch.py` | Twitch data adapter — OAuth PKCE, Helix API, followed channels |
 | `setup.sh` | Dependency check and launcher |
 | `benchmark.py` | CLI vs API performance comparison |

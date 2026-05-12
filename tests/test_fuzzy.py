@@ -1,5 +1,5 @@
 import pytest
-from ytsearch import fuzzy_score, rank_results
+from youtube import fuzzy_score, rank_results
 
 
 # ─── fuzzy_score ──────────────────────────────────────────────────────────────
