@@ -115,7 +115,7 @@ def _build_auth_url(client_id: str, port: int, code_challenge: str) -> str:
     """Construct the Twitch OAuth2 authorize URL with PKCE params."""
     params = {
         "client_id": client_id,
-        "redirect_uri": f"http://127.0.0.1:{port}/callback",
+        "redirect_uri": f"http://localhost:{port}/callback",
         "response_type": "code",
         "scope": "user:read:follows",
         "code_challenge": code_challenge,
@@ -190,7 +190,7 @@ def _exchange_code(
         "code": code,
         "code_verifier": code_verifier,
         "grant_type": "authorization_code",
-        "redirect_uri": f"http://127.0.0.1:{port}/callback",
+        "redirect_uri": f"http://localhost:{port}/callback",
     }).encode()
 
     req = urllib.request.Request(

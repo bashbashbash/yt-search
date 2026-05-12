@@ -45,10 +45,11 @@ Twitch integration shows live channels you follow. It requires a Twitch applicat
 
 ### 1. Register a Twitch app
 
-1. Go to [dev.twitch.tv/console/apps](https://dev.twitch.tv/console/apps) and create a new application
-2. Set the OAuth redirect URL to `http://127.0.0.1:8675/callback`
+1. Go to [dev.twitch.tv/console/apps/create](https://dev.twitch.tv/console/apps/create) and create a new application
+2. Set the OAuth redirect URL to `http://localhost:8675/callback`
 3. Set the category to any value (e.g. "Other")
-4. Copy the **Client ID** from the app's manage page
+4. Set the **Client Type** to **Public** — hearth is a local CLI app that uses PKCE, not a server-side app
+5. Copy the **Client ID** from the app's manage page
 
 ### 2. Create `.twitch_config`
 
