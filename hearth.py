@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ytsearch.py — CLI interface: platform menu, search interaction, playback, history
+hearth.py — CLI interface: platform menu, search interaction, playback, history
 Requires: yt-dlp (brew install yt-dlp or standalone binary)
 Requires: brew install mpv (or VLC app bundle)
 """
@@ -46,7 +46,10 @@ def format_duration(seconds) -> str:
     return f"{h}:{m:02}:{s:02}" if h else f"{m}:{s:02}"
 
 def load_history() -> list[dict]:
-    history_file = Path(__file__).parent / ".yt_search_history.json"
+    history_file = Path(__file__).parent / ".hearth_history.json"
+    old = Path(__file__).parent / ".yt_search_history.json"
+    if old.exists() and not history_file.exists():
+        old.rename(history_file)
     if not history_file.exists():
         return []
     try:
@@ -55,7 +58,7 @@ def load_history() -> list[dict]:
         return []
     
 def save_to_history(entry: dict):
-    history_file = Path(__file__).parent / ".yt_search_history.json"
+    history_file = Path(__file__).parent / ".hearth_history.json"
     history = load_history()
     if history and history[0].get("id") == entry.get("id"):
         return  # don't save duplicate of most recent entry
@@ -244,7 +247,7 @@ def history_loop(history: list[dict]):
             print("  Invalid input.")
 
 def delete_history():
-    history_file = Path(__file__).parent / ".yt_search_history.json"
+    history_file = Path(__file__).parent / ".hearth_history.json"
     confirm = input("\n  Delete all history? (y/n): ").strip().lower()
     if confirm == "y":
         try:

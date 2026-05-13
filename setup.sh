@@ -1,5 +1,5 @@
 #!/bin/bash
-# setup.sh — sets up and runs ytsearch.py
+# setup.sh — sets up and runs hearth.py
 # Run once to set up, then again anytime to launch
 
 set -e
@@ -21,7 +21,7 @@ err()  { echo -e "${RED}  ✗ $1${NC}"; exit 1; }
 info() { echo -e "  → $1"; }
 
 echo ""
-echo "  yt audio search — setup"
+echo "  hearth — setup"
 echo "  ─────────────────────────────────"
 
 # ─── 1. Python ────────────────────────────────────────────────────────────────
@@ -102,4 +102,4 @@ echo "  Setup complete. Launching..."
 echo "  ─────────────────────────────────"
 echo ""
 
-"$PYTHON" "$SCRIPT_DIR/ytsearch.py"
+"$PYTHON" "$SCRIPT_DIR/hearth.py"

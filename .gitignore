@@ -2,7 +2,7 @@
 .player
 __pycache__/
 *.pyc
-.yt_search_history.json
+.hearth_history.json
 
 .pytest_cache/
 .coverage
