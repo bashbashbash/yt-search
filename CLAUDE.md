@@ -4,8 +4,8 @@
 
 ## Project state
 
-**Repo:** yt-search (rename to `hearth` is planned but not yet done)
-**Primary files:** `ytsearch.py` (CLI entry point), `youtube.py` (YouTube adapter), `twitch.py` (Twitch adapter)
+**Repo:** hearth
+**Primary files:** `hearth.py` (CLI entry point), `youtube.py` (YouTube adapter), `twitch.py` (Twitch adapter)
 **Tests:** `tests/` — pytest, run via `.venv/bin/python -m pytest tests/`
 **CI:** GitHub Actions (`test.yml`) — must pass before merge to `main`
 **Rule:** never push directly to `main`
@@ -22,7 +22,7 @@
 
 ## Architecture
 
-- `ytsearch.py` — CLI entry point: platform menu, search interaction, playback (mpv/VLC/ffplay), flat JSON play history
+- `hearth.py` — CLI entry point: platform menu, search interaction, playback (mpv/VLC/ffplay), flat JSON play history
 - `youtube.py` — YouTube data adapter with narrow public interface: `is_available()`, `search(query)`, `get_stream_url(video_id)`
 - `twitch.py` — Twitch data adapter with narrow public interface: `is_available()` and `get_live_channels()`
 - Platform adapters share an **entry dict contract** (see below) so `play()` and history work across sources
@@ -68,5 +68,4 @@ URL construction in `play()` is gated on `source`:
 
 ## Planned future work (out of scope for current sessions unless explicitly requested)
 
-- Rename project from `yt-search` to `hearth` (touches imports, CI, README, repo name)
 - Twitch VOD or clip support
