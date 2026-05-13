@@ -90,26 +90,31 @@ Both `.twitch_config` and `.twitch_token` are gitignored.
 
 ## Benchmark
 
-Measured on macOS 12, Python 3.14, yt-dlp 2026.03.17.
+Baseline measured 2026-05-13 on macOS 12.7.6, Python 3.14.3, yt-dlp 2026.03.17, streamlink 8.4.0.
 
-### Memory (while playing)
+Run `.venv/bin/python benchmark.py` to reproduce or capture a new snapshot.
 
-| Process | Legacy (API) | Current (CLI) |
+### Stream URL resolution (3-run average)
+
+| Source | Avg | Runs |
 |---|---|---|
-| Python | 44 MB | 8 MB |
-| VLC | 16 MB | 6.4 MB |
+| YouTube (yt-dlp) | 1.89s | 2.18, 1.77, 1.73 |
+| Twitch (streamlink) | 1.18s | 1.39, 1.07, 1.07 |
 
-### Latency
+### Memory (peak RSS)
 
-| Operation | CLI | API |
-|---|---|---|
-| Search (25 results) | 2.67s avg | 1.95s avg |
-| Stream URL resolution | 1.77s avg | 1.23s avg |
+| State | RSS |
+|---|---|
+| Idle (post-import) | 22.2 MB |
+| Post-resolution | 22.2 MB |
 
-The CLI approach trades ~0.5-0.7s of latency per call for an 82% reduction in Python memory usage. For an interactive audio tool the latency difference is imperceptible.
+### Startup
 
-### yt_dlp import cost
-Importing `yt_dlp` into the Python process costs **14.8 MB** of peak memory — eliminated entirely in the current version.
+Import time (loading `hearth`, `youtube`, `twitch` modules): **0.122s**
+
+### Historical: CLI vs API (yt-dlp)
+
+The original benchmark compared shelling out to yt-dlp (current approach) vs using its Python API (removed in `legacy-yt-dlp-api` branch). The CLI approach traded ~0.5-0.7s of latency per call for an 82% reduction in Python memory usage (44 MB → 8 MB). Importing `yt_dlp` alone cost 14.8 MB of peak memory — eliminated entirely in the current version.
 
 ## Files
 
@@ -119,4 +124,4 @@ Importing `yt_dlp` into the Python process costs **14.8 MB** of peak memory — 
 | `youtube.py` | YouTube data adapter — search, fuzzy ranking, stream URL resolution |
 | `twitch.py` | Twitch data adapter — Device Code Grant OAuth, Helix API, followed channels |
 | `setup.sh` | Dependency check (including streamlink) and launcher |
-| `benchmark.py` | CLI vs API performance comparison |
+| `benchmark.py` | Baseline performance snapshot (resolution latency, memory, startup) |
