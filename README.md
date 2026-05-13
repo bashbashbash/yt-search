@@ -90,26 +90,7 @@ Both `.twitch_config` and `.twitch_token` are gitignored.
 
 ## Benchmark
 
-Measured on macOS 12, Python 3.14, yt-dlp 2026.03.17.
-
-### Memory (while playing)
-
-| Process | Legacy (API) | Current (CLI) |
-|---|---|---|
-| Python | 44 MB | 8 MB |
-| VLC | 16 MB | 6.4 MB |
-
-### Latency
-
-| Operation | CLI | API |
-|---|---|---|
-| Search (25 results) | 2.67s avg | 1.95s avg |
-| Stream URL resolution | 1.77s avg | 1.23s avg |
-
-The CLI approach trades ~0.5-0.7s of latency per call for an 82% reduction in Python memory usage. For an interactive audio tool the latency difference is imperceptible.
-
-### yt_dlp import cost
-Importing `yt_dlp` into the Python process costs **14.8 MB** of peak memory — eliminated entirely in the current version.
+Performance data and the benchmark script live on the [`benchmark`](../../tree/benchmark) branch. See `benchmark.py` there for details and instructions.
 
 ## Files
 
@@ -119,4 +100,3 @@ Importing `yt_dlp` into the Python process costs **14.8 MB** of peak memory — 
 | `youtube.py` | YouTube data adapter — search, fuzzy ranking, stream URL resolution |
 | `twitch.py` | Twitch data adapter — Device Code Grant OAuth, Helix API, followed channels |
 | `setup.sh` | Dependency check (including streamlink) and launcher |
-| `benchmark.py` | CLI vs API performance comparison |
