@@ -39,13 +39,22 @@ else
   ok "venv already exists"
 fi
 
-# ─── 3. yt-dlp ────────────────────────────────────────────────────────────────
+# ─── 3. streamlink (pip into venv) ────────────────────────────────────────────
+if "$VENV/bin/streamlink" --version &>/dev/null; then
+  ok "streamlink found: $("$VENV/bin/streamlink" --version-check 2>/dev/null || "$VENV/bin/streamlink" --version 2>&1 | head -1)"
+else
+  info "Installing streamlink into venv..."
+  "$PIP" install --quiet streamlink
+  ok "streamlink installed"
+fi
+
+# ─── 4. yt-dlp ────────────────────────────────────────────────────────────────
 if ! command -v yt-dlp &>/dev/null; then
   err "yt-dlp not found. Install it: brew install yt-dlp"
 fi
 ok "yt-dlp found: $(yt-dlp --version)"
 
-# ─── 4. Audio player ──────────────────────────────────────────────────────────
+# ─── 5. Audio player ──────────────────────────────────────────────────────────
 PLAYER=""
 
 # Check mpv (system or symlinked from app)
@@ -79,14 +88,14 @@ else
   exit 1
 fi
 
-# ─── 5. Patch player into script ──────────────────────────────────────────────
+# ─── 6. Patch player into script ──────────────────────────────────────────────
 # Write a small player config file the python script can read
 cat > "$SCRIPT_DIR/.player" <<EOF
 $PLAYER
 EOF
 ok "player config written"
 
-# ─── 6. Run ───────────────────────────────────────────────────────────────────
+# ─── 7. Run ───────────────────────────────────────────────────────────────────
 echo ""
 echo "  ─────────────────────────────────"
 echo "  Setup complete. Launching..."

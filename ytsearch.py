@@ -123,9 +123,22 @@ def play(entry: dict):
     source = entry.get("source", "youtube")
 
     if source == "twitch":
-        stream_url = f"https://twitch.tv/{video_id}"
-        print(f"\n  ▶ Playing live: {title}")
+        print(f"\n  ▶ Listening live: {title}")
         print(f"  ▶ twitch.tv/{video_id}")
+        print("  ▶ Resolving stream via streamlink...")
+        streamlink_bin = str(Path(sys.executable).parent / "streamlink")
+        try:
+            result = subprocess.run(
+                [streamlink_bin, "--stream-url",
+                 f"https://twitch.tv/{video_id}", "best"],
+                capture_output=True, text=True, timeout=30,
+            )
+            stream_url = result.stdout.strip()
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            stream_url = None
+        if not stream_url:
+            print("  ✗ Could not resolve Twitch stream. Is the channel live?")
+            return
     else:
         print(f"\n  ▶ Fetching stream for: {title}")
         print(f"  ▶ ID: {video_id}")
@@ -284,7 +297,7 @@ def search_prompt(history: list[dict]) -> bool:
         return True
 
 def twitch_channel_menu(channels: list[dict]):
-    """Display live Twitch channels and let user pick one to watch."""
+    """Display live Twitch channels and let user pick one to listen to."""
     print(f"\n{'─' * 55}")
     print(f"  Live channels  ({len(channels)})")
     print(f"{'─' * 55}")
@@ -297,7 +310,7 @@ def twitch_channel_menu(channels: list[dict]):
         print(f"      {title}")
         print(f"      {game}  •  {viewers:,} viewers")
     print(f"{'─' * 55}")
-    print("  1-{}=watch  q=back".format(len(channels)))
+    print("  1-{}=listen  q=back".format(len(channels)))
     print(f"{'─' * 55}\n")
 
     choice = input("  > ").strip().lower()
