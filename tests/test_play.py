@@ -45,3 +45,58 @@ def test_play_does_not_save_history_on_failed_stream():
          patch("ytsearch.save_to_history") as mock_save:
         play(entry)
         mock_save.assert_not_called()
+
+
+# ─── Twitch playback via streamlink ──────────────────────────────────────────
+
+def _twitch_entry(**overrides):
+    base = {"id": "somechannel", "title": "Live Stream", "uploader": "SomeChannel",
+            "duration": None, "source": "twitch"}
+    base.update(overrides)
+    return base
+
+
+def test_twitch_play_calls_streamlink():
+    """Twitch entry resolves stream URL via streamlink, then passes to player."""
+    entry = _twitch_entry()
+    fake_url = "https://video-weaver.fra02.hls.ttvnw.net/v1/playlist/abc.m3u8"
+    streamlink_result = MagicMock(stdout=fake_url + "\n", returncode=0)
+
+    with patch("subprocess.run", side_effect=[streamlink_result, None]) as mock_run, \
+         patch("ytsearch.get_player", return_value=("vlc", "/Applications/VLC.app/Contents/MacOS/VLC")), \
+         patch("ytsearch.save_to_history"):
+        play(entry)
+        # First call: streamlink resolution
+        sl_call = mock_run.call_args_list[0]
+        assert "streamlink" in sl_call[0][0][0]
+        assert "https://twitch.tv/somechannel" in sl_call[0][0]
+        assert "best" in sl_call[0][0]
+        # Second call: player launch with resolved URL
+        player_call = mock_run.call_args_list[1]
+        assert fake_url in player_call[0][0]
+
+
+def test_twitch_play_fails_gracefully_on_empty_stream():
+    """If streamlink returns empty output, play exits without launching player."""
+    entry = _twitch_entry()
+    streamlink_result = MagicMock(stdout="", returncode=1)
+
+    with patch("subprocess.run", return_value=streamlink_result) as mock_run, \
+         patch("ytsearch.save_to_history") as mock_save:
+        play(entry)
+        # Only one subprocess call (streamlink), no player launch
+        assert mock_run.call_count == 1
+        mock_save.assert_not_called()
+
+
+def test_twitch_play_does_not_call_ytdlp():
+    """Twitch entries must not call youtube.get_stream_url."""
+    entry = _twitch_entry()
+    streamlink_result = MagicMock(stdout="https://stream.url\n", returncode=0)
+
+    with patch("subprocess.run", side_effect=[streamlink_result, None]), \
+         patch("youtube.get_stream_url") as mock_yt, \
+         patch("ytsearch.get_player", return_value=("vlc", "/Applications/VLC.app/Contents/MacOS/VLC")), \
+         patch("ytsearch.save_to_history"):
+        play(entry)
+        mock_yt.assert_not_called()
