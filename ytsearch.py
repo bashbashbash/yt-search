@@ -10,12 +10,31 @@ import json
 import sys
 import subprocess
 import shutil
+import time
 from pathlib import Path
 
 import twitch
 import youtube
 
 PAGE_SIZE = 5
+_TWITCH_CACHE_TTL = 300  # 5 minutes
+_twitch_cache = {"status": "", "channels": [], "fetched_at": 0.0}
+
+
+def _get_twitch_status() -> tuple[str, list[dict]]:
+    """Return cached Twitch menu status, refreshing if stale (>5 min)."""
+    if time.time() - _twitch_cache["fetched_at"] < _TWITCH_CACHE_TTL:
+        return (_twitch_cache["status"], _twitch_cache["channels"])
+    status, channels = twitch.get_menu_status()
+    _twitch_cache["status"] = status
+    _twitch_cache["channels"] = channels
+    _twitch_cache["fetched_at"] = time.time()
+    return (status, channels)
+
+
+def _invalidate_twitch_cache():
+    """Force next _get_twitch_status() call to re-fetch."""
+    _twitch_cache["fetched_at"] = 0.0
 
 
 def format_duration(seconds) -> str:
@@ -291,7 +310,7 @@ def twitch_channel_menu(channels: list[dict]):
 def platform_menu() -> str | None:
     """Show platform selection menu. Returns 'youtube', 'twitch', or None to quit."""
     yt_ok, yt_reason = youtube.is_available()
-    twitch_ok, twitch_reason = twitch.is_available()
+    twitch_status, _twitch_channels = _get_twitch_status()
 
     print(f"\n{'─' * 55}")
     print("  hearth")
@@ -300,12 +319,10 @@ def platform_menu() -> str | None:
         print("  [1] YouTube")
     else:
         print(f"  [1] YouTube  ({yt_reason})")
-    if twitch_ok:
-        print("  [2] Twitch")
-    elif twitch_reason == "not configured":
-        print("  [2] Twitch  (not configured — see README)")
+    if twitch_status:
+        print(f"  [2] Twitch  ({twitch_status})")
     else:
-        print("  [2] Twitch  (service unreachable)")
+        print("  [2] Twitch")
     print(f"{'─' * 55}")
     print("  1-2=select  q=quit")
     print(f"{'─' * 55}\n")
@@ -319,13 +336,13 @@ def platform_menu() -> str | None:
             return "back"
         return "youtube"
     elif choice == "2":
-        if not twitch_ok:
-            if twitch_reason == "not configured":
-                print("\n  Twitch is not configured.")
-                print("  Create .twitch_config with your client_id.")
-                print("  See README for setup instructions.")
-            else:
-                print(f"\n  Twitch: {twitch_reason}")
+        if twitch_status == "not configured":
+            print("\n  Twitch is not configured.")
+            print("  Create .twitch_config with your client_id.")
+            print("  See README for setup instructions.")
+            return "back"
+        elif twitch_status == "service unreachable":
+            print(f"\n  Twitch: {twitch_status}")
             return "back"
         return "twitch"
     return "back"
@@ -350,8 +367,12 @@ def youtube_flow():
 
 def twitch_flow():
     """Fetch followed live channels and display selection menu."""
-    print("\n  Fetching live channels...")
-    channels = twitch.get_live_channels()
+    status, channels = _get_twitch_status()
+    if not channels:
+        # not authorized or no one live — try full flow (triggers auth if needed)
+        print("\n  Fetching live channels...")
+        channels = twitch.get_live_channels()
+        _invalidate_twitch_cache()
     if not channels:
         print("  No followed channels are live.")
         return

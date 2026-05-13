@@ -1,25 +1,18 @@
 """
-twitch.py — Twitch followed-channels integration via Helix API + PKCE OAuth
+twitch.py — Twitch followed-channels integration via Helix API + Device Code OAuth
 
 Public interface:
     is_available()      → (bool, str)   — config + API reachability check
     get_live_channels() → list[dict]    — live followed channels as entry dicts
 """
 
-import base64
-import hashlib
 import json
 import logging
 import os
-import secrets
-import socket
 import time
 import urllib.parse
 import urllib.request
-import webbrowser
-from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
-from threading import Thread
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +20,6 @@ _BASE_DIR = Path(__file__).parent
 _CONFIG_PATH = _BASE_DIR / ".twitch_config"
 _TOKEN_PATH = _BASE_DIR / ".twitch_token"
 
-_DEFAULT_PORT = 8675
-_AUTH_TIMEOUT = 60  # seconds to wait for browser callback
 _EXPIRY_BUFFER = 60  # seconds before actual expiry to consider token expired
 
 
@@ -53,8 +44,7 @@ class TwitchAPIError(Exception):
 # ---------------------------------------------------------------------------
 
 def load_config() -> dict:
-    """Read .twitch_config. Raises TwitchConfigError if absent or malformed.
-    Injects default redirect_port=8675 if not specified."""
+    """Read .twitch_config. Raises TwitchConfigError if absent or malformed."""
     if not _CONFIG_PATH.exists():
         raise TwitchConfigError(
             f"{_CONFIG_PATH} not found. "
@@ -70,7 +60,6 @@ def load_config() -> dict:
             f"{_CONFIG_PATH} must contain a 'client_id' field."
         )
 
-    config.setdefault("redirect_port", _DEFAULT_PORT)
     return config
 
 
@@ -98,124 +87,97 @@ def is_token_expired(token: dict) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# PKCE helpers
+# Device Code OAuth flow
 # ---------------------------------------------------------------------------
 
-def _generate_pkce_pair() -> tuple[str, str]:
-    """Generate (code_verifier, code_challenge) for PKCE.
-    verifier: 64 URL-safe random bytes
-    challenge: base64url(sha256(verifier)) with padding stripped"""
-    verifier = secrets.token_urlsafe(64)
-    digest = hashlib.sha256(verifier.encode("ascii")).digest()
-    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
-    return verifier, challenge
-
-
-def _build_auth_url(client_id: str, port: int, code_challenge: str) -> str:
-    """Construct the Twitch OAuth2 authorize URL with PKCE params."""
-    params = {
-        "client_id": client_id,
-        "redirect_uri": f"http://localhost:{port}/callback",
-        "response_type": "code",
-        "scope": "user:read:follows",
-        "code_challenge": code_challenge,
-        "code_challenge_method": "S256",
-    }
-    return (
-        "https://id.twitch.tv/oauth2/authorize?"
-        + urllib.parse.urlencode(params)
-    )
-
-
-# ---------------------------------------------------------------------------
-# OAuth flow
-# ---------------------------------------------------------------------------
-
-class _CallbackHandler(BaseHTTPRequestHandler):
-    """HTTP handler that captures a single OAuth callback."""
-
-    def do_GET(self):  # noqa: N802 — required by BaseHTTPRequestHandler
-        parsed = urllib.parse.urlparse(self.path)
-        qs = urllib.parse.parse_qs(parsed.query)
-
-        if "error" in qs:
-            self.server.auth_error = qs["error"][0]
-            self.server.auth_code = None
-        else:
-            self.server.auth_code = qs.get("code", [None])[0]
-            self.server.auth_error = None
-
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html")
-        self.end_headers()
-        self.wfile.write(
-            b"<html><body><p>Authorization complete. "
-            b"You can close this tab.</p></body></html>"
-        )
-
-    def log_message(self, format, *args):  # noqa: A002
-        pass  # suppress default stderr logging
-
-
-def _start_callback_server(port: int, auth_url: str) -> str:
-    """Bind localhost callback server, open browser, wait for code.
-    Returns the authorization code. Raises TwitchAuthError on timeout
-    or if the callback carries an error parameter."""
-    server = HTTPServer(("127.0.0.1", port), _CallbackHandler)
-    server.timeout = _AUTH_TIMEOUT
-    server.auth_code = None
-    server.auth_error = None
-
-    webbrowser.open(auth_url)
-    server.handle_request()  # blocks until one request or timeout
-    server.server_close()
-
-    if server.auth_error:
-        raise TwitchAuthError(
-            f"Twitch authorization denied: {server.auth_error}"
-        )
-    if server.auth_code is None:
-        raise TwitchAuthError(
-            "Timed out waiting for Twitch authorization callback."
-        )
-    return server.auth_code
-
-
-def _exchange_code(
-    client_id: str, code: str, code_verifier: str, port: int
-) -> dict:
-    """Exchange authorization code for tokens via Twitch token endpoint."""
+def _request_device_code(client_id: str) -> dict:
+    """Request a device code from Twitch. Returns the full response dict
+    containing device_code, user_code, verification_uri, interval, expires_in."""
     data = urllib.parse.urlencode({
         "client_id": client_id,
-        "code": code,
-        "code_verifier": code_verifier,
-        "grant_type": "authorization_code",
-        "redirect_uri": f"http://localhost:{port}/callback",
+        "scopes": "user:read:follows",
     }).encode()
 
     req = urllib.request.Request(
-        "https://id.twitch.tv/oauth2/token",
+        "https://id.twitch.tv/oauth2/device",
         data=data,
         method="POST",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
     try:
         with urllib.request.urlopen(req) as resp:
-            body = json.loads(resp.read())
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        error_body = exc.read().decode()
+        raise TwitchAuthError(
+            f"Device code request failed: {exc} — {error_body}"
+        ) from exc
     except Exception as exc:
-        raise TwitchAuthError(f"Token exchange failed: {exc}") from exc
+        raise TwitchAuthError(
+            f"Device code request failed: {exc}"
+        ) from exc
 
-    body["expires_at"] = int(time.time()) + body.get("expires_in", 0)
-    return body
+
+def _poll_for_token(
+    client_id: str, device_code: str, interval: int, expires_in: int
+) -> dict:
+    """Poll the token endpoint until the user authorizes or the code expires.
+    Returns the token dict on success."""
+    deadline = time.time() + expires_in
+
+    while time.time() < deadline:
+        time.sleep(interval)
+
+        data = urllib.parse.urlencode({
+            "client_id": client_id,
+            "device_code": device_code,
+            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+        }).encode()
+
+        req = urllib.request.Request(
+            "https://id.twitch.tv/oauth2/token",
+            data=data,
+            method="POST",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        try:
+            with urllib.request.urlopen(req) as resp:
+                body = json.loads(resp.read())
+                body["expires_at"] = (
+                    int(time.time()) + body.get("expires_in", 0)
+                )
+                return body
+        except urllib.error.HTTPError as exc:
+            error_body = json.loads(exc.read().decode())
+            status = error_body.get("status", exc.code)
+            message = error_body.get("message", "")
+
+            if status == 400 and "authorization_pending" in message.lower():
+                continue
+            raise TwitchAuthError(
+                f"Token poll failed: {message}"
+            ) from exc
+
+    raise TwitchAuthError(
+        "Device code expired — user did not authorize in time."
+    )
 
 
-def run_oauth_flow(client_id: str, port: int) -> dict:
-    """Full PKCE OAuth orchestration.
-    Generates PKCE pair, opens browser, waits for callback, exchanges code."""
-    print("  Opening browser for Twitch authorization...")
-    verifier, challenge = _generate_pkce_pair()
-    auth_url = _build_auth_url(client_id, port, challenge)
-    code = _start_callback_server(port, auth_url)
-    token = _exchange_code(client_id, code, verifier, port)
+def run_oauth_flow(client_id: str) -> dict:
+    """Device Code OAuth orchestration.
+    Requests device code, prompts user, polls until authorized."""
+    device = _request_device_code(client_id)
+
+    print(f"\n  Go to: {device['verification_uri']}")
+    print(f"  Enter code: {device['user_code']}")
+    print("  Waiting for authorization...\n")
+
+    token = _poll_for_token(
+        client_id,
+        device["device_code"],
+        device.get("interval", 5),
+        device.get("expires_in", 1800),
+    )
     return token
 
 
@@ -224,7 +186,9 @@ def run_oauth_flow(client_id: str, port: int) -> dict:
 # ---------------------------------------------------------------------------
 
 def refresh_access_token(token: dict, client_id: str) -> dict:
-    """Refresh an expired access token using the refresh_token grant."""
+    """Refresh an expired access token using the refresh_token grant.
+    Device Code refresh tokens are single-use — the new token is saved
+    immediately to avoid losing it."""
     data = urllib.parse.urlencode({
         "client_id": client_id,
         "grant_type": "refresh_token",
@@ -246,15 +210,16 @@ def refresh_access_token(token: dict, client_id: str) -> dict:
     # preserve user_id if it was cached
     if "user_id" in token and "user_id" not in body:
         body["user_id"] = token["user_id"]
+    save_token(body)
     return body
 
 
-def ensure_valid_token(client_id: str, port: int) -> dict:
+def ensure_valid_token(client_id: str) -> dict:
     """Load, refresh, or re-authorize as needed. Returns a valid token."""
     token = load_token()
 
     if token is None:
-        token = run_oauth_flow(client_id, port)
+        token = run_oauth_flow(client_id)
         save_token(token)
         return token
 
@@ -266,7 +231,7 @@ def ensure_valid_token(client_id: str, port: int) -> dict:
         token = refresh_access_token(token, client_id)
     except TwitchAuthError:
         logger.info("Refresh failed, starting full OAuth flow.")
-        token = run_oauth_flow(client_id, port)
+        token = run_oauth_flow(client_id)
 
     save_token(token)
     return token
@@ -348,36 +313,68 @@ def _to_entry(stream: dict) -> dict:
 # Public interface
 # ---------------------------------------------------------------------------
 
-def is_available() -> tuple[bool, str]:
-    """Check whether Twitch integration is configured and reachable.
-    Does NOT check whether any channels are live."""
-    try:
-        load_config()
-    except TwitchConfigError:
-        return (False, "not configured")
-
-    # lightweight reachability check — hit the Twitch OAuth validate endpoint
+def _check_reachable() -> bool:
+    """Lightweight reachability check — hit the Twitch OAuth validate endpoint."""
     req = urllib.request.Request("https://id.twitch.tv/oauth2/validate")
     try:
         urllib.request.urlopen(req, timeout=5)
     except urllib.error.HTTPError:
         # 401 is expected without a token — server is reachable
-        return (True, "")
+        return True
     except Exception:
-        return (False, "service unreachable")
+        return False
+    return True
 
-    return (True, "")
+
+def get_menu_status() -> tuple[str, list[dict]]:
+    """Return (status_label, channels) for the platform menu.
+    Does NOT trigger the Device Code auth flow — returns 'not authorized'
+    if there is no valid token.
+
+    Status labels: 'not configured', 'service unreachable', 'not authorized',
+    'no one live', or 'N live'."""
+    try:
+        config = load_config()
+    except TwitchConfigError:
+        return ("not configured", [])
+
+    if not _check_reachable():
+        return ("service unreachable", [])
+
+    client_id = config["client_id"]
+    token = load_token()
+
+    if token is None:
+        return ("not authorized", [])
+
+    # try to ensure a valid (non-expired) token without triggering auth
+    if is_token_expired(token):
+        try:
+            token = refresh_access_token(token, client_id)
+        except TwitchAuthError:
+            return ("not authorized", [])
+
+    try:
+        user_id = get_user_id(token, client_id)
+        channels = fetch_live_followed(token, client_id, user_id)
+    except (TwitchAPIError, TwitchAuthError):
+        return ("not authorized", [])
+
+    if not channels:
+        return ("no one live", [])
+    count = len(channels)
+    return (f"{count} live", channels)
 
 
 def get_live_channels() -> list[dict]:
     """Full orchestration: config → auth → fetch followed live streams.
+    Triggers Device Code auth if needed.
     Returns [] on any failure (logs reason, never raises)."""
     try:
         config = load_config()
         client_id = config["client_id"]
-        port = config["redirect_port"]
 
-        token = ensure_valid_token(client_id, port)
+        token = ensure_valid_token(client_id)
         user_id = get_user_id(token, client_id)
         return fetch_live_followed(token, client_id, user_id)
     except Exception:
