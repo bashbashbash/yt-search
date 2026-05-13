@@ -41,15 +41,14 @@ Play history is stored locally in `.yt_search_history.json` (capped at 200 entri
 
 ## Twitch setup
 
-Twitch integration shows live channels you follow. It requires a Twitch application for OAuth — no client secret is needed (PKCE flow).
+Twitch integration shows live channels you follow. It requires a Twitch application for OAuth — no client secret is needed (Device Code flow).
 
 ### 1. Register a Twitch app
 
 1. Go to [dev.twitch.tv/console/apps/create](https://dev.twitch.tv/console/apps/create) and create a new application
-2. Set the OAuth redirect URL to `http://localhost:8675/callback`
-3. Set the category to any value (e.g. "Other")
-4. Set the **Client Type** to **Public** — hearth is a local CLI app that uses PKCE, not a server-side app
-5. Copy the **Client ID** from the app's manage page
+2. Set the category to any value (e.g. "Other")
+3. Set the **Client Type** to **Public**
+4. Copy the **Client ID** from the app's manage page
 
 ### 2. Create `.twitch_config`
 
@@ -61,11 +60,9 @@ In the repo root:
 }
 ```
 
-Optionally add `"redirect_port": 8675` if you need a different port — default is `8675`.
-
 ### 3. Authorize
 
-On first launch, selecting Twitch opens your browser to authorize the app. The token is saved to `.twitch_token` and refreshed automatically on future runs.
+On first launch, selecting Twitch displays a code and a URL. Open the URL in any browser, enter the code, and authorize the app. The token is saved to `.twitch_token` and refreshed automatically on future runs.
 
 Both `.twitch_config` and `.twitch_token` are gitignored.
 

@@ -54,7 +54,7 @@ URL construction in `play()` is gated on `source`:
 
 - `.twitch_config` and `.twitch_token` are gitignored — never commit credentials
 - No hardcoded client IDs or secrets anywhere
-- Twitch uses PKCE (Proof Key for Code Exchange) OAuth — no client_secret
+- Twitch uses Device Code Grant OAuth — no client_secret, no redirect URI needed
 
 ---
 
@@ -62,7 +62,7 @@ URL construction in `play()` is gated on `source`:
 
 - Run tests: `.venv/bin/python -m pytest tests/ -v`
 - All tests must pass before committing
-- Integration tests for the callback server use real sockets — verify port release via socket probe, not process inspection
+- Twitch Device Code tests mock all HTTP — no real network or sockets needed
 
 ---
 

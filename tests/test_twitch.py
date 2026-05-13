@@ -1,17 +1,14 @@
 """
-tests/test_twitch.py — unit + integration tests for twitch.py
+tests/test_twitch.py — unit tests for twitch.py (Device Code OAuth flow)
 
-Unit tests mock all HTTP; integration tests use real sockets but no network.
+All HTTP calls are mocked — no network required.
 """
 
-import hashlib
-import base64
-import http.client
 import json
-import socket
 import time
-import threading
 from unittest import mock
+from urllib.error import HTTPError
+from io import BytesIO
 
 import pytest
 
@@ -19,33 +16,8 @@ import twitch
 
 
 # ---------------------------------------------------------------------------
-# Unit tests
+# Unit tests — token expiry
 # ---------------------------------------------------------------------------
-
-class TestGeneratePkcePair:
-    def test_verifier_is_url_safe(self):
-        verifier, _ = twitch._generate_pkce_pair()
-        # URL-safe base64 alphabet: A-Z a-z 0-9 - _
-        allowed = set(
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
-        )
-        assert all(c in allowed for c in verifier)
-
-    def test_challenge_is_sha256_of_verifier(self):
-        verifier, challenge = twitch._generate_pkce_pair()
-        expected_digest = hashlib.sha256(verifier.encode("ascii")).digest()
-        expected = (
-            base64.urlsafe_b64encode(expected_digest)
-            .rstrip(b"=")
-            .decode("ascii")
-        )
-        assert challenge == expected
-
-    def test_pair_is_unique_across_calls(self):
-        a = twitch._generate_pkce_pair()
-        b = twitch._generate_pkce_pair()
-        assert a[0] != b[0]
-
 
 class TestIsTokenExpired:
     def test_not_expired(self):
@@ -66,6 +38,10 @@ class TestIsTokenExpired:
         token = {"expires_at": time.time() + 60}
         assert twitch.is_token_expired(token) is True
 
+
+# ---------------------------------------------------------------------------
+# Unit tests — entry mapping
+# ---------------------------------------------------------------------------
 
 class TestToEntry:
     def test_maps_helix_stream_to_entry(self):
@@ -103,6 +79,134 @@ class TestToEntry:
         assert entry["source"] == "twitch"
 
 
+# ---------------------------------------------------------------------------
+# Unit tests — Device Code flow
+# ---------------------------------------------------------------------------
+
+def _mock_urlopen_response(body: dict):
+    """Create a mock context manager that returns body as JSON."""
+    resp = mock.MagicMock()
+    resp.read.return_value = json.dumps(body).encode()
+    resp.status = 200
+    resp.__enter__ = mock.Mock(return_value=resp)
+    resp.__exit__ = mock.Mock(return_value=False)
+    return resp
+
+
+def _mock_http_error(status: int, body: dict):
+    """Create an HTTPError with a JSON body."""
+    fp = BytesIO(json.dumps(body).encode())
+    return HTTPError(
+        url="", code=status, msg="Bad Request", hdrs=None, fp=fp
+    )
+
+
+class TestRequestDeviceCode:
+    @mock.patch("twitch.urllib.request.urlopen")
+    def test_returns_device_code_response(self, mock_urlopen):
+        expected = {
+            "device_code": "dev123",
+            "user_code": "ABCD-EFGH",
+            "verification_uri": "https://www.twitch.tv/activate",
+            "interval": 5,
+            "expires_in": 1800,
+        }
+        mock_urlopen.return_value = _mock_urlopen_response(expected)
+
+        result = twitch._request_device_code("my_client_id")
+
+        assert result == expected
+
+    @mock.patch("twitch.urllib.request.urlopen")
+    def test_raises_on_http_error(self, mock_urlopen):
+        mock_urlopen.side_effect = _mock_http_error(
+            400, {"status": 400, "message": "invalid client"}
+        )
+
+        with pytest.raises(twitch.TwitchAuthError, match="invalid client"):
+            twitch._request_device_code("bad_client_id")
+
+
+class TestPollForToken:
+    @mock.patch("twitch.time.sleep")
+    @mock.patch("twitch.urllib.request.urlopen")
+    def test_returns_token_after_pending(self, mock_urlopen, mock_sleep):
+        """First poll returns authorization_pending, second returns token."""
+        pending_error = _mock_http_error(
+            400, {"status": 400, "message": "authorization_pending"}
+        )
+        token_body = {
+            "access_token": "tok123",
+            "refresh_token": "ref456",
+            "expires_in": 3600,
+            "scope": ["user:read:follows"],
+            "token_type": "bearer",
+        }
+        mock_urlopen.side_effect = [
+            pending_error,
+            _mock_urlopen_response(token_body),
+        ]
+
+        result = twitch._poll_for_token("cid", "dev123", 5, 1800)
+
+        assert result["access_token"] == "tok123"
+        assert result["refresh_token"] == "ref456"
+        assert "expires_at" in result
+        assert mock_sleep.call_count == 2
+
+    @mock.patch("twitch.time.sleep")
+    @mock.patch("twitch.urllib.request.urlopen")
+    def test_raises_on_non_pending_error(self, mock_urlopen, mock_sleep):
+        """A non-pending error (e.g. access_denied) raises immediately."""
+        mock_urlopen.side_effect = _mock_http_error(
+            400, {"status": 400, "message": "access_denied"}
+        )
+
+        with pytest.raises(twitch.TwitchAuthError, match="access_denied"):
+            twitch._poll_for_token("cid", "dev123", 5, 1800)
+
+    @mock.patch("twitch.time.time")
+    @mock.patch("twitch.time.sleep")
+    @mock.patch("twitch.urllib.request.urlopen")
+    def test_raises_on_expiry(self, mock_urlopen, mock_sleep, mock_time):
+        """Raises TwitchAuthError when device code expires."""
+        # First call to time.time() sets deadline, second exceeds it
+        mock_time.side_effect = [100.0, 2000.0]
+
+        with pytest.raises(twitch.TwitchAuthError, match="expired"):
+            twitch._poll_for_token("cid", "dev123", 5, 1800)
+
+        mock_urlopen.assert_not_called()
+
+
+class TestRunOauthFlow:
+    @mock.patch("twitch._poll_for_token")
+    @mock.patch("twitch._request_device_code")
+    @mock.patch("builtins.print")
+    def test_orchestrates_device_code_flow(
+        self, mock_print, mock_request, mock_poll
+    ):
+        mock_request.return_value = {
+            "device_code": "dev123",
+            "user_code": "ABCD-EFGH",
+            "verification_uri": "https://www.twitch.tv/activate",
+            "interval": 5,
+            "expires_in": 1800,
+        }
+        expected_token = {"access_token": "tok", "expires_at": 9999}
+        mock_poll.return_value = expected_token
+
+        result = twitch.run_oauth_flow("my_cid")
+
+        assert result is expected_token
+        mock_request.assert_called_once_with("my_cid")
+        mock_poll.assert_called_once_with("my_cid", "dev123", 5, 1800)
+
+
+# ---------------------------------------------------------------------------
+# Unit tests — token lifecycle
+# ---------------------------------------------------------------------------
+
 class TestEnsureValidToken:
     """Three paths: valid token, expired→refresh, expired→refresh fails→re-auth."""
 
@@ -121,7 +225,7 @@ class TestEnsureValidToken:
         token = self._make_token(expired=False)
         mock_load.return_value = token
 
-        result = twitch.ensure_valid_token("cid", 8675)
+        result = twitch.ensure_valid_token("cid")
 
         assert result is token
         mock_save.assert_not_called()
@@ -137,7 +241,7 @@ class TestEnsureValidToken:
         mock_load.return_value = expired
         mock_refresh.return_value = refreshed
 
-        result = twitch.ensure_valid_token("cid", 8675)
+        result = twitch.ensure_valid_token("cid")
 
         mock_refresh.assert_called_once_with(expired, "cid")
         assert result is refreshed
@@ -156,9 +260,9 @@ class TestEnsureValidToken:
         mock_refresh.side_effect = twitch.TwitchAuthError("refresh failed")
         mock_oauth.return_value = new_token
 
-        result = twitch.ensure_valid_token("cid", 8675)
+        result = twitch.ensure_valid_token("cid")
 
-        mock_oauth.assert_called_once_with("cid", 8675)
+        mock_oauth.assert_called_once_with("cid")
         assert result is new_token
         mock_save.assert_called_once_with(new_token)
 
@@ -170,162 +274,97 @@ class TestEnsureValidToken:
         mock_load.return_value = None
         mock_oauth.return_value = new_token
 
-        result = twitch.ensure_valid_token("cid", 8675)
+        result = twitch.ensure_valid_token("cid")
 
-        mock_oauth.assert_called_once_with("cid", 8675)
+        mock_oauth.assert_called_once_with("cid")
         assert result is new_token
         mock_save.assert_called_once_with(new_token)
 
 
-class TestIsAvailable:
-    @mock.patch("twitch.urllib.request.urlopen")
+# ---------------------------------------------------------------------------
+# Unit tests — get_menu_status
+# ---------------------------------------------------------------------------
+
+class TestGetMenuStatus:
+    def _make_token(self, expired=False):
+        offset = -100 if expired else 3600
+        return {
+            "access_token": "tok123",
+            "refresh_token": "ref456",
+            "expires_at": time.time() + offset,
+            "user_id": "789",
+        }
+
     @mock.patch("twitch.load_config")
-    def test_not_configured(self, mock_config, mock_urlopen):
+    def test_not_configured(self, mock_config):
         mock_config.side_effect = twitch.TwitchConfigError("missing")
 
-        ok, reason = twitch.is_available()
+        status, channels = twitch.get_menu_status()
 
-        assert ok is False
-        assert reason == "not configured"
-        mock_urlopen.assert_not_called()
+        assert status == "not configured"
+        assert channels == []
 
-    @mock.patch("twitch.urllib.request.urlopen")
-    @mock.patch("twitch.load_config")
-    def test_service_unreachable(self, mock_config, mock_urlopen):
-        mock_config.return_value = {"client_id": "x", "redirect_port": 8675}
-        mock_urlopen.side_effect = OSError("network down")
+    @mock.patch("twitch._check_reachable", return_value=False)
+    @mock.patch("twitch.load_config", return_value={"client_id": "x"})
+    def test_service_unreachable(self, mock_config, mock_reachable):
+        status, channels = twitch.get_menu_status()
 
-        ok, reason = twitch.is_available()
+        assert status == "service unreachable"
+        assert channels == []
 
-        assert ok is False
-        assert reason == "service unreachable"
+    @mock.patch("twitch._check_reachable", return_value=True)
+    @mock.patch("twitch.load_token", return_value=None)
+    @mock.patch("twitch.load_config", return_value={"client_id": "x"})
+    def test_not_authorized(self, mock_config, mock_token, mock_reachable):
+        status, channels = twitch.get_menu_status()
 
-    @mock.patch("twitch.urllib.request.urlopen")
-    @mock.patch("twitch.load_config")
-    def test_reachable_via_401(self, mock_config, mock_urlopen):
-        """A 401 from the validate endpoint means the server is reachable."""
-        mock_config.return_value = {"client_id": "x", "redirect_port": 8675}
-        from urllib.error import HTTPError
-        mock_urlopen.side_effect = HTTPError(
-            url="", code=401, msg="Unauthorized", hdrs=None, fp=None
-        )
+        assert status == "not authorized"
+        assert channels == []
 
-        ok, reason = twitch.is_available()
+    @mock.patch("twitch._check_reachable", return_value=True)
+    @mock.patch("twitch.fetch_live_followed", return_value=[])
+    @mock.patch("twitch.get_user_id", return_value="789")
+    @mock.patch("twitch.load_token")
+    @mock.patch("twitch.load_config", return_value={"client_id": "x"})
+    def test_no_one_live(
+        self, mock_config, mock_token, mock_uid, mock_fetch, mock_reachable
+    ):
+        mock_token.return_value = self._make_token(expired=False)
 
-        assert ok is True
-        assert reason == ""
+        status, channels = twitch.get_menu_status()
 
-    @mock.patch("twitch.urllib.request.urlopen")
-    @mock.patch("twitch.load_config")
-    def test_reachable_via_200(self, mock_config, mock_urlopen):
-        mock_config.return_value = {"client_id": "x", "redirect_port": 8675}
-        mock_urlopen.return_value.__enter__ = mock.Mock()
-        mock_urlopen.return_value.__exit__ = mock.Mock(return_value=False)
+        assert status == "no one live"
+        assert channels == []
 
-        ok, reason = twitch.is_available()
+    @mock.patch("twitch._check_reachable", return_value=True)
+    @mock.patch("twitch.fetch_live_followed")
+    @mock.patch("twitch.get_user_id", return_value="789")
+    @mock.patch("twitch.load_token")
+    @mock.patch("twitch.load_config", return_value={"client_id": "x"})
+    def test_channels_live(
+        self, mock_config, mock_token, mock_uid, mock_fetch, mock_reachable
+    ):
+        mock_token.return_value = self._make_token(expired=False)
+        live = [{"id": "a"}, {"id": "b"}, {"id": "c"}]
+        mock_fetch.return_value = live
 
-        assert ok is True
-        assert reason == ""
+        status, channels = twitch.get_menu_status()
 
+        assert status == "3 live"
+        assert channels == live
 
-# ---------------------------------------------------------------------------
-# Integration tests (real sockets, no network)
-# ---------------------------------------------------------------------------
+    @mock.patch("twitch._check_reachable", return_value=True)
+    @mock.patch("twitch.save_token")
+    @mock.patch("twitch.refresh_access_token")
+    @mock.patch("twitch.load_token")
+    @mock.patch("twitch.load_config", return_value={"client_id": "x"})
+    def test_expired_token_refresh_fails_returns_not_authorized(
+        self, mock_config, mock_token, mock_refresh, mock_save, mock_reachable
+    ):
+        mock_token.return_value = self._make_token(expired=True)
+        mock_refresh.side_effect = twitch.TwitchAuthError("refresh failed")
 
-# Use a high port unlikely to conflict
-_TEST_PORT = 18675
+        status, channels = twitch.get_menu_status()
 
-
-class TestCallbackServerReleasesPort:
-    def test_returns_code_and_releases_port(self):
-        """Start callback server in a thread, send a fake callback,
-        verify code is returned and port is freed."""
-        result = {}
-
-        def run_server():
-            try:
-                # We need to pass an auth_url but we won't actually open a
-                # browser — mock webbrowser.open to no-op.
-                code = twitch._start_callback_server(
-                    _TEST_PORT, "http://example.com"
-                )
-                result["code"] = code
-            except Exception as exc:
-                result["error"] = exc
-
-        with mock.patch("twitch.webbrowser.open"):
-            server_thread = threading.Thread(target=run_server)
-            server_thread.start()
-
-            # Give the server a moment to bind
-            time.sleep(0.3)
-
-            # Send fake callback
-            conn = http.client.HTTPConnection("127.0.0.1", _TEST_PORT)
-            conn.request("GET", "/callback?code=test123")
-            resp = conn.getresponse()
-            assert resp.status == 200
-            conn.close()
-
-            server_thread.join(timeout=5)
-
-        assert "error" not in result, f"Server raised: {result.get('error')}"
-        assert result["code"] == "test123"
-
-        # Verify port is released
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        try:
-            sock.settimeout(1)
-            with pytest.raises(ConnectionRefusedError):
-                sock.connect(("127.0.0.1", _TEST_PORT))
-        finally:
-            sock.close()
-
-
-class TestCallbackServerTimeout:
-    def test_timeout_raises_and_releases_port(self):
-        """Start server, send nothing, assert TwitchAuthError and port freed."""
-        result = {}
-
-        # Use a very short timeout to keep the test fast
-        original_timeout = twitch._AUTH_TIMEOUT
-
-        def run_server():
-            try:
-                code = twitch._start_callback_server(
-                    _TEST_PORT, "http://example.com"
-                )
-                result["code"] = code
-            except twitch.TwitchAuthError as exc:
-                result["error"] = exc
-            except Exception as exc:
-                result["unexpected"] = exc
-
-        try:
-            twitch._AUTH_TIMEOUT = 2  # 2 seconds for test speed
-
-            with mock.patch("twitch.webbrowser.open"):
-                # Patch HTTPServer to use our short timeout
-                original_init = twitch.HTTPServer.__init__
-
-                server_thread = threading.Thread(target=run_server)
-                server_thread.start()
-                server_thread.join(timeout=10)
-
-            assert "unexpected" not in result, (
-                f"Unexpected error: {result.get('unexpected')}"
-            )
-            assert "error" in result
-            assert isinstance(result["error"], twitch.TwitchAuthError)
-
-            # Verify port is released
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            try:
-                sock.settimeout(1)
-                with pytest.raises(ConnectionRefusedError):
-                    sock.connect(("127.0.0.1", _TEST_PORT))
-            finally:
-                sock.close()
-
-        finally:
-            twitch._AUTH_TIMEOUT = original_timeout
+        assert status == "not authorized"
+        assert channels == []
