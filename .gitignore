@@ -3,6 +3,7 @@
 __pycache__/
 *.pyc
 .hearth_history.json
+.benchmark_results.json
 
 .pytest_cache/
 .coverage
