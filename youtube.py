@@ -9,6 +9,7 @@ import subprocess
 from difflib import SequenceMatcher
 
 FETCH_COUNT = 25  # fetch once, rank locally — avoids repeat requests
+SUBPROCESS_TIMEOUT = 5  # seconds — let TimeoutExpired propagate to caller
 
 
 def is_available() -> tuple[bool, str]:
@@ -30,6 +31,7 @@ def fetch_results(query: str) -> list[dict]:
         ],
         capture_output=True,
         text=True,
+        timeout=SUBPROCESS_TIMEOUT,
     )
     entries = []
     for line in result.stdout.strip().splitlines():
@@ -77,6 +79,7 @@ def get_stream_url(video_id: str) -> str | None:
         ],
         capture_output=True,
         text=True,
+        timeout=SUBPROCESS_TIMEOUT,
     )
     stream = result.stdout.strip()
     return stream if stream else None

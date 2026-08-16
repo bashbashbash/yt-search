@@ -12,11 +12,19 @@ A lightweight CLI tool to search and listen to YouTube audio and live Twitch str
 ## Setup
 
 ```bash
-chmod +x setup.sh
+chmod +x setup.sh run.sh
 ./setup.sh
 ```
 
-Run `./setup.sh` every time to launch. It checks dependencies and drops you into the platform menu.
+First-time setup checks dependencies, creates the venv, and installs streamlink.
+
+## Launch
+
+```bash
+./run.sh
+```
+
+Run `./run.sh` anytime to launch hearth.
 
 ## Usage
 
@@ -99,4 +107,5 @@ Performance data and the benchmark script live on the [`benchmark`](../../tree/b
 | `hearth.py` | CLI entry point — platform menu, search interaction, playback, history |
 | `youtube.py` | YouTube data adapter — search, fuzzy ranking, stream URL resolution |
 | `twitch.py` | Twitch data adapter — Device Code Grant OAuth, Helix API, followed channels |
-| `setup.sh` | Dependency check (including streamlink) and launcher |
+| `setup.sh` | First-time dependency check and venv setup |
+| `run.sh` | Launch script — activates venv and runs hearth.py |

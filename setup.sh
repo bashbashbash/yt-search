@@ -95,11 +95,10 @@ $PLAYER
 EOF
 ok "player config written"
 
-# ─── 7. Run ───────────────────────────────────────────────────────────────────
+# ─── Done ─────────────────────────────────────────────────────────────────────
 echo ""
 echo "  ─────────────────────────────────"
-echo "  Setup complete. Launching..."
+echo "  Setup complete."
+echo "  Run ./run.sh to launch hearth."
 echo "  ─────────────────────────────────"
 echo ""
-
-"$PYTHON" "$SCRIPT_DIR/hearth.py"

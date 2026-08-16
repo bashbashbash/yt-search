@@ -1,4 +1,5 @@
 import json
+import subprocess
 import pytest
 from unittest.mock import patch, MagicMock
 from youtube import fetch_results, get_stream_url
@@ -66,3 +67,19 @@ def test_get_stream_url_whitespace_only_returns_none():
     with patch("subprocess.run", return_value=make_mock_result("   \n  ")):
         result = get_stream_url("abc123")
     assert result is None
+
+
+# ─── timeout propagation ─────────────────────────────────────────────────────
+
+def test_fetch_results_propagates_timeout():
+    """TimeoutExpired from subprocess propagates to caller."""
+    with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("yt-dlp", 5)):
+        with pytest.raises(subprocess.TimeoutExpired):
+            fetch_results("mozart")
+
+
+def test_get_stream_url_propagates_timeout():
+    """TimeoutExpired from subprocess propagates to caller."""
+    with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("yt-dlp", 5)):
+        with pytest.raises(subprocess.TimeoutExpired):
+            get_stream_url("abc123")

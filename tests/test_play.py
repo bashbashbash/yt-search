@@ -1,5 +1,6 @@
+import subprocess
 import pytest
-from hearth import play
+from hearth import play, search_loop
 from unittest.mock import patch, MagicMock
 
 
@@ -100,3 +101,65 @@ def test_twitch_play_does_not_call_ytdlp():
          patch("hearth.save_to_history"):
         play(entry)
         mock_yt.assert_not_called()
+
+
+# ─── YouTube timeout + retry ─────────────────────────────────────────────────
+
+def _yt_entry(**overrides):
+    base = {"id": "abc123", "title": "Test Video", "uploader": "Someone",
+            "duration": 100, "source": "youtube"}
+    base.update(overrides)
+    return base
+
+
+def test_search_timeout_user_declines_retry(capsys):
+    """First search times out, user declines retry, search_loop returns."""
+    with patch("youtube.search", side_effect=subprocess.TimeoutExpired("yt-dlp", 5)), \
+         patch("builtins.input", return_value="n"):
+        search_loop("mozart")
+    output = capsys.readouterr().out
+    assert "taking longer than expected" in output
+
+
+def test_search_timeout_user_retries_and_succeeds(capsys):
+    """First search times out, user retries, second attempt returns results."""
+    results = [{"id": "a", "title": "Mozart", "uploader": "X", "duration": 100}]
+    with patch("youtube.search", side_effect=[subprocess.TimeoutExpired("yt-dlp", 5), results]), \
+         patch("builtins.input", side_effect=["y", "q"]):
+        search_loop("mozart")
+    output = capsys.readouterr().out
+    assert "taking longer than expected" in output
+    assert "Results" in output
+
+
+def test_search_timeout_both_attempts_fail(capsys):
+    """Both search attempts time out, user sees 'not responding' message."""
+    with patch("youtube.search", side_effect=subprocess.TimeoutExpired("yt-dlp", 5)), \
+         patch("builtins.input", return_value="y"):
+        search_loop("mozart")
+    output = capsys.readouterr().out
+    assert "not responding" in output
+
+
+def test_play_stream_timeout_user_declines_retry(capsys):
+    """Stream URL resolution times out, user declines, play returns without launching player."""
+    entry = _yt_entry()
+    with patch("youtube.get_stream_url", side_effect=subprocess.TimeoutExpired("yt-dlp", 5)), \
+         patch("builtins.input", return_value="n"), \
+         patch("hearth.save_to_history") as mock_save:
+        play(entry)
+    mock_save.assert_not_called()
+    output = capsys.readouterr().out
+    assert "taking longer than expected" in output
+
+
+def test_play_stream_timeout_both_attempts_fail(capsys):
+    """Both stream URL attempts time out, user sees 'not responding' message."""
+    entry = _yt_entry()
+    with patch("youtube.get_stream_url", side_effect=subprocess.TimeoutExpired("yt-dlp", 5)), \
+         patch("builtins.input", return_value="y"), \
+         patch("hearth.save_to_history") as mock_save:
+        play(entry)
+    mock_save.assert_not_called()
+    output = capsys.readouterr().out
+    assert "not responding" in output
