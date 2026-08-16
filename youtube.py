@@ -6,15 +6,26 @@ Public interface: is_available(), search(query), get_stream_url(video_id)
 import json
 import shutil
 import subprocess
+import sys
 from difflib import SequenceMatcher
+from pathlib import Path
 
 FETCH_COUNT = 25  # fetch once, rank locally — avoids repeat requests
 SUBPROCESS_TIMEOUT = 5  # seconds — let TimeoutExpired propagate to caller
 
 
+def _yt_dlp_bin() -> str:
+    """Resolve yt-dlp from the venv bin dir, falling back to system PATH."""
+    venv_bin = Path(sys.executable).parent / "yt-dlp"
+    if venv_bin.exists():
+        return str(venv_bin)
+    return "yt-dlp"
+
+
 def is_available() -> tuple[bool, str]:
-    """Check whether yt-dlp is on PATH."""
-    if shutil.which("yt-dlp"):
+    """Check whether yt-dlp is reachable (venv or system PATH)."""
+    venv_bin = Path(sys.executable).parent / "yt-dlp"
+    if venv_bin.exists() or shutil.which("yt-dlp"):
         return (True, "ok")
     return (False, "yt-dlp not found")
 
@@ -22,7 +33,7 @@ def is_available() -> tuple[bool, str]:
 def fetch_results(query: str) -> list[dict]:
     result = subprocess.run(
         [
-            "yt-dlp",
+            _yt_dlp_bin(),
             f"ytsearch{FETCH_COUNT}:{query}",
             "--dump-json",
             "--flat-playlist",
@@ -70,7 +81,7 @@ def get_stream_url(video_id: str) -> str | None:
     url = f"https://www.youtube.com/watch?v={video_id}"
     result = subprocess.run(
         [
-            "yt-dlp",
+            _yt_dlp_bin(),
             url,
             "--get-url",
             "-f", "bestaudio",
