@@ -5,9 +5,8 @@ A lightweight CLI tool to search and listen to YouTube audio and live Twitch str
 ## Requirements
 
 - Python 3.10+
-- [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) — `brew install yt-dlp`
 - An audio player: [mpv](https://mpv.io) (recommended), [VLC](https://www.videolan.org), or ffplay
-- [`streamlink`](https://streamlink.github.io) — installed automatically by `setup.sh` for Twitch stream resolution
+- [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) and [`streamlink`](https://streamlink.github.io) — installed automatically by `setup.sh` into the venv
 
 ## Setup
 

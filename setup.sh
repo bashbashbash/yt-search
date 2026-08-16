@@ -48,11 +48,14 @@ else
   ok "streamlink installed"
 fi
 
-# ─── 4. yt-dlp ────────────────────────────────────────────────────────────────
-if ! command -v yt-dlp &>/dev/null; then
-  err "yt-dlp not found. Install it: brew install yt-dlp"
+# ─── 4. yt-dlp (pip into venv) ────────────────────────────────────────────────
+if "$VENV/bin/yt-dlp" --version &>/dev/null; then
+  ok "yt-dlp found: $("$VENV/bin/yt-dlp" --version)"
+else
+  info "Installing yt-dlp into venv..."
+  "$PIP" install --quiet yt-dlp
+  ok "yt-dlp installed: $("$VENV/bin/yt-dlp" --version)"
 fi
-ok "yt-dlp found: $(yt-dlp --version)"
 
 # ─── 5. Audio player ──────────────────────────────────────────────────────────
 PLAYER=""
