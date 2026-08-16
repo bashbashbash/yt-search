@@ -189,7 +189,14 @@ def search_loop(query: str):
 
     while True:
         page_entries = print_page(ranked, page, total_pages)
-        choice = input("  > ").strip().lower()
+        try:
+            choice = input("  > ").strip().lower()
+        except KeyboardInterrupt:
+            print("\n  Interrupted.")
+            return
+        except EOFError:
+            print("\n  No input.")
+            return
 
         if choice == "q":
             return
@@ -230,7 +237,14 @@ def history_loop(history: list[dict]):
         print("  n=next  p=prev  1-10=play  d=delete all  q=back")
         print(f"  {'─' * 55}\n")
 
-        choice = input("  > ").strip().lower()
+        try:
+            choice = input("  > ").strip().lower()
+        except KeyboardInterrupt:
+            print("\n  Interrupted.")
+            return
+        except EOFError:
+            print("\n  No input.")
+            return
 
         if choice == "q":
             return
@@ -248,7 +262,14 @@ def history_loop(history: list[dict]):
 
 def delete_history():
     history_file = Path(__file__).parent / ".hearth_history.json"
-    confirm = input("\n  Delete all history? (y/n): ").strip().lower()
+    try:
+        confirm = input("\n  Delete all history? (y/n): ").strip().lower()
+    except KeyboardInterrupt:
+        print("\n  Interrupted.")
+        return
+    except EOFError:
+        print("\n  No input.")
+        return
     if confirm == "y":
         try:
             history_file.unlink()
@@ -262,8 +283,11 @@ def recent_prompt(history: list[dict]) -> str:
     """Returns 'quit', 'continue', or 'search'."""
     try:
         choice = input("\n  Play recent (1-5) or Enter to search: ").strip()
-    except (KeyboardInterrupt, EOFError):
-        print("\n  Bye.")
+    except KeyboardInterrupt:
+        print("\n  Interrupted.")
+        return "quit"
+    except EOFError:
+        print("\n  No input.")
         return "quit"
     if choice.lower() == "q":
         print("  Bye.")
@@ -284,8 +308,11 @@ def search_prompt(history: list[dict]) -> bool:
     """Handle search prompt interaction. Returns False to quit, True to continue."""
     try:
         query = input("\n  Search (or 'h' for history): ").strip()
-    except (KeyboardInterrupt, EOFError):
-        print("\n  Bye.")
+    except KeyboardInterrupt:
+        print("\n  Interrupted.")
+        return False
+    except EOFError:
+        print("\n  No input.")
         return False
     if not query:
         return True
@@ -316,7 +343,14 @@ def twitch_channel_menu(channels: list[dict]):
     print("  1-{}=listen  q=back".format(len(channels)))
     print(f"{'─' * 55}\n")
 
-    choice = input("  > ").strip().lower()
+    try:
+        choice = input("  > ").strip().lower()
+    except KeyboardInterrupt:
+        print("\n  Interrupted.")
+        return
+    except EOFError:
+        print("\n  No input.")
+        return
     if choice == "q":
         return
     if choice.isdigit() and 1 <= int(choice) <= len(channels):
@@ -343,7 +377,14 @@ def platform_menu() -> str | None:
     print("  1-2=select  q=quit")
     print(f"{'─' * 55}\n")
 
-    choice = input("  > ").strip().lower()
+    try:
+        choice = input("  > ").strip().lower()
+    except KeyboardInterrupt:
+        print("\n  Interrupted.")
+        return None
+    except EOFError:
+        print("\n  No input.")
+        return None
     if choice == "q":
         return None
     elif choice == "1":
