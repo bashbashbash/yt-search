@@ -100,6 +100,20 @@ def print_page(entries: list[dict], page: int, total_pages: int):
     return page_entries
 
 
+def _ask_retry(action: str) -> bool:
+    """Prompt user to retry a timed-out action. Returns True to retry, False to give up."""
+    print(f"  ⚠ {action} is taking longer than expected.")
+    try:
+        choice = input("  Wait 5 more seconds? (y/n): ").strip().lower()
+    except KeyboardInterrupt:
+        print("\n  Interrupted.")
+        return False
+    except EOFError:
+        print("\n  No input.")
+        return False
+    return choice == "y"
+
+
 def get_player() -> tuple[str, str] | None:
     """Read player from .player config, fall back to PATH detection."""
     config = Path(__file__).parent / ".player"
@@ -145,7 +159,17 @@ def play(entry: dict):
     else:
         print(f"\n  ▶ Fetching stream for: {title}")
         print(f"  ▶ ID: {video_id}")
-        stream_url = youtube.get_stream_url(video_id)
+        try:
+            stream_url = youtube.get_stream_url(video_id)
+        except subprocess.TimeoutExpired:
+            if _ask_retry("Stream resolution"):
+                try:
+                    stream_url = youtube.get_stream_url(video_id)
+                except subprocess.TimeoutExpired:
+                    print("  ✗ YouTube is not responding.")
+                    return
+            else:
+                return
         if not stream_url:
             print("  ✗ Could not resolve stream URL.")
             return
@@ -179,7 +203,17 @@ def play(entry: dict):
 
 def search_loop(query: str):
     print(f"\n  Searching for: {query!r} ...")
-    ranked = youtube.search(query)
+    try:
+        ranked = youtube.search(query)
+    except subprocess.TimeoutExpired:
+        if _ask_retry("Search"):
+            try:
+                ranked = youtube.search(query)
+            except subprocess.TimeoutExpired:
+                print("  ✗ YouTube search is not responding.")
+                return
+        else:
+            return
     if not ranked:
         print("  No results found.")
         return
